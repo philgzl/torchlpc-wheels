@@ -15,12 +15,38 @@ import warnings
 #     EXTENSION_LOADED = False
 
 try:
+    from . import _build_info
+except ImportError:  # running from a source tree that was never built
+    _build_info = None
+
+if _build_info is not None:
+    __version__ = _build_info.VERSION
+    _built = tuple(_build_info.TORCH_VERSION.split(".")[:2])
+    _running = tuple(torch.__version__.split("+")[0].split(".")[:2])
+    if _built != _running:
+        # The compiled kernels only work with the torch minor version they were
+        # built against. Fail loudly rather than silently using the slow path.
+        raise ImportError(
+            f"torchlpc {_build_info.VERSION} was built for torch "
+            f"{'.'.join(_built)}.x but torch {torch.__version__} is installed. "
+            f"Install the matching build, e.g. "
+            f"`pip install torchlpc-wheels \"torch=={'.'.join(_running)}.*\"`."
+        )
+
+try:
     from . import _C
 
     EXTENSION_LOADED = True
-except ImportError:
+except ImportError as e:
     EXTENSION_LOADED = False
-    warnings.warn("Custom extension not loaded. Falling back to Numba implementation.")
+    warnings.warn(
+        f"Custom extension not loaded ({e}). Falling back to Numba implementation."
+    )
+
+# True when the CUDA kernels are compiled in (they are in the prebuilt wheels).
+CUDA_EXTENSION_LOADED = (
+    EXTENSION_LOADED and _build_info is not None and _build_info.CUDA_VERSION is not None
+)
 
 from .core import LPC
 from .recurrence import Recurrence

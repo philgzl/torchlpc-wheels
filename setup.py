@@ -1,44 +1,98 @@
-import setuptools
-import os
+"""Build script for the prebuilt-CUDA fork of torchlpc.
+
+Each build targets exactly one torch minor version (like torchaudio):
+the wheel's version encodes it and its metadata pins it.
+
+    base version (torchlpc/VERSION.txt)  0.8
+    torch used at build time             2.10.0+cu128
+    -> wheel version                     0.8.0.210, requires torch>=2.10,<2.11
+
+Environment variables:
+    TORCHLPC_FORCE_CUDA=1     compile the CUDA kernels even without a visible GPU
+                              (CI runners have none; nvcc is all that's needed)
+    TORCH_CUDA_ARCH_LIST      GPU architectures to build for; defaults to the
+                              list torch itself was built for
+"""
+
 import glob
+import os
+import re
+
+import setuptools
 import torch
 from torch.utils.cpp_extension import (
+    CUDA_HOME,
+    BuildExtension,
     CppExtension,
     CUDAExtension,
-    BuildExtension,
-    CUDA_HOME,
 )
 
 library_name = "torchlpc"
+here = os.path.dirname(os.path.abspath(__file__))
 
+# --------------------------------------------------------------------------- #
+# Versioning: <base>.<torch major><torch minor, 2 digits>
+# --------------------------------------------------------------------------- #
+TORCH_MAJOR, TORCH_MINOR = (int(x) for x in torch.__version__.split(".")[:2])
+TORCH_CODE = TORCH_MAJOR * 100 + TORCH_MINOR  # 2.10 -> 210, 2.6 -> 206
 
-# if torch.__version__ >= "2.6.0":
-#     py_limited_api = True
-# else:
-py_limited_api = False
+with open(os.path.join(here, library_name, "VERSION.txt")) as f:
+    base = f.read().strip().lstrip("v")
+base_parts = base.split(".")
+if len(base_parts) > 3 or not all(p.isdigit() for p in base_parts):
+    raise ValueError(f"VERSION.txt must look like X[.Y[.Z]], got {base!r}")
+base = ".".join((base_parts + ["0", "0"])[:3])
+
+VERSION = f"{base}.{TORCH_CODE}"
+TORCH_REQUIREMENT = f"torch>={TORCH_MAJOR}.{TORCH_MINOR},<{TORCH_MAJOR}.{TORCH_MINOR + 1}"
+
+# --------------------------------------------------------------------------- #
+# Extension
+# --------------------------------------------------------------------------- #
+force_cuda = os.environ.get("TORCHLPC_FORCE_CUDA", "0") == "1"
+use_cuda = CUDA_HOME is not None and (force_cuda or torch.cuda.is_available())
+if force_cuda and CUDA_HOME is None:
+    raise RuntimeError("TORCHLPC_FORCE_CUDA=1 but no CUDA toolkit found (set CUDA_HOME)")
+if force_cuda and torch.version.cuda is None:
+    raise RuntimeError(f"TORCHLPC_FORCE_CUDA=1 but torch {torch.__version__} is a CPU build")
+
+if use_cuda and not os.environ.get("TORCH_CUDA_ARCH_LIST"):
+    # Match the GPU architectures torch itself ships kernels for
+    # ("sm_75 sm_80 ... sm_120" -> "7.5;8.0;...;12.0+PTX"); works without a GPU.
+    # PTX for the newest one lets future GPUs JIT-compile the kernels.
+    flags = torch._C._cuda_getArchFlags()
+    sms = sorted({int(m) for m in re.findall(r"(?:sm|compute)_(\d+)", flags)})
+    if not sms:
+        raise RuntimeError(f"Could not parse torch's CUDA arch list: {flags!r}")
+    archs = [f"{s // 10}.{s % 10}" for s in sms]
+    archs[-1] += "+PTX"
+    os.environ["TORCH_CUDA_ARCH_LIST"] = ";".join(archs)
+if use_cuda:
+    print(f"torchlpc: building CUDA kernels for {os.environ['TORCH_CUDA_ARCH_LIST']}")
+
+# One abi3 wheel per torch version instead of one per Python version.
+# The module only uses PyModule_Create, which is in the limited API; torch
+# adds -DPy_LIMITED_API itself. Sources must include <torch/all.h>, not
+# <torch/torch.h> (which pulls in pybind11 and the full Python API).
+py_limited_api = (TORCH_MAJOR, TORCH_MINOR) >= (2, 6)
 
 
 def get_extensions():
-    use_cuda = torch.cuda.is_available() and CUDA_HOME is not None
     use_openmp = torch.backends.openmp.is_available()
     extension = CUDAExtension if use_cuda else CppExtension
 
     extra_link_args = []
-    extra_compile_args = {}
+    extra_compile_args = {"cxx": [], "nvcc": []}
     if use_openmp:
-        extra_compile_args["cxx"] = ["-fopenmp"]
+        extra_compile_args["cxx"].append("-fopenmp")
         extra_link_args.append("-fopenmp")
 
     extensions_dir = os.path.join(library_name, "csrc")
     sources = list(glob.glob(os.path.join(extensions_dir, "*.cpp")))
-
-    extensions_cuda_dir = os.path.join(extensions_dir, "cuda")
-    cuda_sources = list(glob.glob(os.path.join(extensions_cuda_dir, "*.cu")))
-
     if use_cuda:
-        sources += cuda_sources
+        sources += list(glob.glob(os.path.join(extensions_dir, "cuda", "*.cu")))
 
-    ext_modules = [
+    return [
         extension(
             f"{library_name}._C",
             sources,
@@ -48,10 +102,23 @@ def get_extensions():
         )
     ]
 
-    return ext_modules
 
+def write_build_info():
+    """Record what the extension was built against; checked at import time."""
+    with open(os.path.join(here, library_name, "_build_info.py"), "w") as f:
+        f.write(
+            "# Generated by setup.py. Do not edit.\n"
+            f"VERSION = {VERSION!r}\n"
+            f"TORCH_VERSION = {torch.__version__.split('+')[0]!r}\n"
+            f"CUDA_VERSION = {torch.version.cuda if use_cuda else None!r}\n"
+        )
+
+
+write_build_info()
 
 setuptools.setup(
+    version=VERSION,
+    install_requires=[TORCH_REQUIREMENT, "numpy", "numba"],
     ext_modules=get_extensions(),
     cmdclass={"build_ext": BuildExtension},
     options={"bdist_wheel": {"py_limited_api": "cp39"}} if py_limited_api else {},

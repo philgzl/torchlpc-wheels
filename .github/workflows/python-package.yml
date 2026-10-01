@@ -34,7 +34,8 @@ jobs:
     - name: Install torch
       run: |
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install -e .[dev]
+        pip install setuptools wheel
+        pip install --no-build-isolation -e .[dev]
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
@@ -80,7 +81,8 @@ jobs:
         export CXX=$(brew --prefix llvm@18)/bin/clang++
         export LDFLAGS="-L/opt/homebrew/opt/libomp/lib"
         export CPPFLAGS="-I/opt/homebrew/opt/libomp/include"
-        pip install -e .[dev]
+        pip install torch setuptools wheel
+        pip install --no-build-isolation -e .[dev]
     - name: Test with pytest
       run: |
         pytest
