@@ -44,7 +44,9 @@ if len(base_parts) > 3 or not all(p.isdigit() for p in base_parts):
 base = ".".join((base_parts + ["0", "0"])[:3])
 
 VERSION = f"{base}.{TORCH_CODE}"
-TORCH_REQUIREMENT = f"torch>={TORCH_MAJOR}.{TORCH_MINOR},<{TORCH_MAJOR}.{TORCH_MINOR + 1}"
+TORCH_REQUIREMENT = (
+    f"torch>={TORCH_MAJOR}.{TORCH_MINOR},<{TORCH_MAJOR}.{TORCH_MINOR + 1}"
+)
 
 # --------------------------------------------------------------------------- #
 # Extension
@@ -52,9 +54,13 @@ TORCH_REQUIREMENT = f"torch>={TORCH_MAJOR}.{TORCH_MINOR},<{TORCH_MAJOR}.{TORCH_M
 force_cuda = os.environ.get("TORCHLPC_FORCE_CUDA", "0") == "1"
 use_cuda = CUDA_HOME is not None and (force_cuda or torch.cuda.is_available())
 if force_cuda and CUDA_HOME is None:
-    raise RuntimeError("TORCHLPC_FORCE_CUDA=1 but no CUDA toolkit found (set CUDA_HOME)")
+    raise RuntimeError(
+        "TORCHLPC_FORCE_CUDA=1 but no CUDA toolkit found (set CUDA_HOME)"
+    )
 if force_cuda and torch.version.cuda is None:
-    raise RuntimeError(f"TORCHLPC_FORCE_CUDA=1 but torch {torch.__version__} is a CPU build")
+    raise RuntimeError(
+        f"TORCHLPC_FORCE_CUDA=1 but torch {torch.__version__} is a CPU build"
+    )
 
 if use_cuda and not os.environ.get("TORCH_CUDA_ARCH_LIST"):
     # Match the GPU architectures torch itself ships kernels for

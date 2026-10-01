@@ -45,7 +45,9 @@ except ImportError as e:
 
 # True when the CUDA kernels are compiled in (they are in the prebuilt wheels).
 CUDA_EXTENSION_LOADED = (
-    EXTENSION_LOADED and _build_info is not None and _build_info.CUDA_VERSION is not None
+    EXTENSION_LOADED
+    and _build_info is not None
+    and _build_info.CUDA_VERSION is not None
 )
 
 from .core import LPC
