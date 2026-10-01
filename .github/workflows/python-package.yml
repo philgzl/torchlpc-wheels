@@ -82,7 +82,10 @@ jobs:
         export LDFLAGS="-L/opt/homebrew/opt/libomp/lib"
         export CPPFLAGS="-I/opt/homebrew/opt/libomp/include"
         pip install torch setuptools wheel
-        pip install --no-build-isolation -e .[dev]
+        set -o pipefail
+        pip install -v --no-build-isolation -e .[dev] 2>&1 | tee build.log || {
+          grep -iE "error|fatal" build.log | grep -vE "Werror|-Wno-" | head -n 15 \
+            | while IFS= read -r l; do echo "::error::${l:0:900}"; done; exit 1; }
     - name: Test with pytest
       run: |
         pytest

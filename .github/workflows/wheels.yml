@@ -98,13 +98,21 @@ jobs:
           TORCHLPC_FORCE_CUDA: "1"
           MAX_JOBS: "4"
         run: |
+          set -o pipefail
+          # On failure, surface the first errors as annotations on the run page.
+          annotate() {
+            grep -iE "error|unsupported|fatal" "$1" | grep -vE "Werror|-Wno-|errors?\.h" \
+              | head -n 15 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+          }
           nvcc --version && g++ --version | head -1
-          /venv/bin/python -m pip wheel --no-build-isolation --no-deps -v -w dist .
+          /venv/bin/python -m pip wheel --no-build-isolation --no-deps -v -w dist . 2>&1 | tee build.log \
+            || { annotate build.log; exit 1; }
           # Don't vendor torch, CUDA runtime or torch's libgomp: they come from
           # the torch install (the pin guarantees a matching one).
           /venv/bin/auditwheel repair dist/*.whl -w wheelhouse \
             --exclude 'libc10.so' --exclude 'libc10_cuda.so' --exclude 'libtorch*.so' \
-            --exclude 'libcudart.so.*' --exclude 'libgomp.so.1'
+            --exclude 'libcudart.so.*' --exclude 'libgomp.so.1' 2>&1 | tee repair.log \
+            || { annotate repair.log; exit 1; }
           ls -l wheelhouse
 
       - name: Test installed wheel
