@@ -68,6 +68,9 @@ if use_cuda and not os.environ.get("TORCH_CUDA_ARCH_LIST"):
     # PTX for the newest one lets future GPUs JIT-compile the kernels.
     flags = torch._C._cuda_getArchFlags()
     sms = sorted({int(m) for m in re.findall(r"(?:sm|compute)_(\d+)", flags)})
+    # The kernels use double-precision atomicAdd, which needs sm_60+
+    # (torch <= 2.6 still lists sm_50).
+    sms = [s for s in sms if s >= 60]
     if not sms:
         raise RuntimeError(f"Could not parse torch's CUDA arch list: {flags!r}")
     archs = [f"{s // 10}.{s % 10}" for s in sms]
