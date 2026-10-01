@@ -78,14 +78,19 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Build CPP extension with clang++
       run: |
-        export CXX=$(brew --prefix llvm)/bin/clang++
-        export LDFLAGS="-L/opt/homebrew/opt/libomp/lib"
-        export CPPFLAGS="-I/opt/homebrew/opt/libomp/include"
         pip install torch setuptools wheel
+        export CXX=$(brew --prefix llvm)/bin/clang++
+        # Link against the libomp bundled with torch, not Homebrew's: two
+        # OpenMP runtimes in one process abort at import (OMP Error #15).
+        TORCH_LIB=$(python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))")
+        ls "$TORCH_LIB" | grep -i omp
+        export LDFLAGS="-L$TORCH_LIB -Wl,-rpath,$TORCH_LIB"
+        export CPPFLAGS="-I/opt/homebrew/opt/libomp/include"
         set -o pipefail
         pip install -v --no-build-isolation -e .[dev] 2>&1 | tee build.log || {
           grep -iE "error|fatal" build.log | grep -vE "Werror|-Wno-" | head -n 15 \
             | while IFS= read -r l; do echo "::error::${l:0:900}"; done; exit 1; }
     - name: Test with pytest
       run: |
+        otool -L torchlpc/_C*.so | grep -i omp || true
         pytest
