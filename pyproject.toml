@@ -1,26 +1,13 @@
 [build-system]
 requires = [
     "setuptools >= 77.0.3",
-    "setuptools-git-versioning>=2.0,<3",
     "wheel",
     "torch",
-    "numba",
-    "numpy",
 ]
 build-backend = "setuptools.build_meta:__legacy__"
 
-[tool.setuptools-git-versioning]
-enabled = true
-# change the file path
-version_file = "torchlpc/VERSION.txt"
-count_commits_from_version_file = true                    # <--- enable commits tracking
-dev_template = "{tag}.{branch}{ccount}"                   # suffix for versions will be .dev
-dirty_template = "{tag}.{branch}{ccount}"                 # same thing here
-branch_formatter = "torchlpc._version:format_branch_name"
-
 [tool.setuptools.package-data]
-# include VERSION file to a package
-torchlpc = ["VERSION"]
+torchlpc = ["VERSION.txt"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -32,9 +19,10 @@ zip-safe = false
 license-files = ["LICENSE"]
 
 [project]
-dynamic = ["version"]
-name = "torchlpc"
-dependencies = ["torch >= 2.0.0", "numpy", "numba"]
+# version and dependencies (incl. the torch pin) are set per build in setup.py
+dynamic = ["version", "dependencies"]
+# the import name stays `torchlpc`
+name = "torchlpc-wheels"
 requires-python = ">=3.9"
 authors = [{ name = "Chin-Yun Yu", email = "chin-yun.yu@qmul.ac.uk" }]
 maintainers = [{ name = "Chin-Yun Yu", email = "chin-yun.yu@qmul.ac.uk" }]
@@ -51,6 +39,10 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+
+[project.urls]
+Homepage = "https://github.com/philgzl/torchlpc-wheels"
+Upstream = "https://github.com/DiffAPF/torchlpc"
 
 [project.optional-dependencies]
 dev = ["pytest >= 6.0", "scipy", "numpy", "pytest-cov"]

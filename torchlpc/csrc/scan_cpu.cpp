@@ -1,6 +1,6 @@
 #include <Python.h>
 #include <torch/script.h>
-#include <torch/torch.h>
+#include <torch/all.h>
 
 #include <algorithm>
 #include <utility>

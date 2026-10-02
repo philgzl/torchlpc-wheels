@@ -1,6 +1,29 @@
 # TorchLPC
 [![PyPI version](https://badge.fury.io/py/torchlpc.svg)](https://badge.fury.io/py/torchlpc)
 
+> **Fork with prebuilt CUDA kernels.** This fork of [DiffAPF/torchlpc](https://github.com/DiffAPF/torchlpc)
+> publishes `torchlpc-wheels`: Linux x86_64 wheels with the C++/CUDA extension already compiled,
+> so no `nvcc` or compiler is needed at install time. Like torchaudio, each release is built
+> for one torch minor version and pins it:
+>
+> | `torchlpc-wheels` | torch | CUDA |
+> |---|---|---|
+> | `0.8.0.206` | 2.6.x | 12.4 |
+> | `0.8.0.207` | 2.7.x | 12.6 |
+> | `0.8.0.208` – `0.8.0.210` | 2.8.x – 2.10.x | 12.8 |
+> | `0.8.0.211` – `0.8.0.214` | 2.11.x – 2.14.x | 13.0 |
+>
+> CUDA is whatever the default `pip install torch` build of that version uses. Each wheel is
+> `abi3`, so it works on every Python version torch supports.
+>
+> ```bash
+> pip install torchlpc-wheels                      # newest torch (upgrades torch if needed!)
+> pip install torchlpc-wheels "torch==2.8.*"       # keep a specific torch version
+> ```
+>
+> Import it as usual with `import torchlpc`. Don't install it next to upstream `torchlpc`,
+> because both provide the same module.
+
 `torchlpc` provides a PyTorch implementation of the Linear Predictive Coding (LPC) filter, also known as all-pole filter.
 It's fast, differentiable, and supports batched inputs with time-varying filter coefficients.
 

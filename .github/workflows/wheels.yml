@@ -1,0 +1,154 @@
+# Build one CUDA wheel per torch minor version and publish them to PyPI.
+#
+# Each wheel is built against the default PyPI build of that torch version
+# (so with whatever CUDA version `pip install torch` gives you), is tagged
+# cp39-abi3 (works on every Python torch supports), and pins
+# torch>=X.Y,<X.(Y+1). Version: <VERSION.txt>.<torch code>, e.g. 0.8.0.214.
+#
+# Releasing:
+#   - new torchlpc version: bump torchlpc/VERSION.txt, push tag vX.Y.Z
+#     -> builds every torch version in TORCH_VERSIONS and publishes
+#   - new torch release: add it to TORCH_VERSIONS, then run this workflow
+#     manually with `torch: "2.15"` and `publish: true`
+#     -> adds 0.8.0.215 alongside the existing wheels
+
+name: Wheels
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: ["setup.py", "pyproject.toml", "torchlpc/csrc/**", ".github/workflows/wheels.yml"]
+  workflow_dispatch:
+    inputs:
+      torch:
+        description: "Torch minor versions to build, comma-separated (empty = all)"
+        required: false
+        default: ""
+      publish:
+        description: "Publish to PyPI"
+        type: boolean
+        default: false
+
+env:
+  # Oldest first (PR builds use the first and last entries).
+  TORCH_VERSIONS: "2.6,2.7,2.8,2.9,2.10,2.11,2.12,2.13,2.14"
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      torch: ${{ steps.m.outputs.torch }}
+    steps:
+      - id: m
+        env:
+          INPUT: ${{ inputs.torch }}
+        run: |
+          v="${INPUT:-$TORCH_VERSIONS}"
+          # PRs only build the oldest and newest to save time.
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            v="${TORCH_VERSIONS%%,*},${TORCH_VERSIONS##*,}"
+          fi
+          echo "torch=$(jq -cRn --arg v "$v" '$v | split(",") | map(gsub(" "; ""))')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: matrix
+    name: torch ${{ matrix.torch }}
+    runs-on: ubuntu-latest
+    # glibc 2.28 baseline, same as torch's own wheels
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    strategy:
+      fail-fast: false
+      matrix:
+        torch: ${{ fromJSON(needs.matrix.outputs.torch) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches VERSION.txt
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          base=$(tr -d ' \n' < torchlpc/VERSION.txt)
+          base=$(echo "$base.0.0" | cut -d. -f1-3)
+          [ "${GITHUB_REF_NAME#v}" = "$base" ] || {
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION.txt ($base)"; exit 1; }
+
+      - name: Install torch ${{ matrix.torch }} (default PyPI build)
+        run: |
+          /opt/python/cp312-cp312/bin/python -m venv /venv
+          /venv/bin/pip install --no-cache-dir "torch==${{ matrix.torch }}.*" numpy setuptools wheel auditwheel
+          /venv/bin/python -c "import torch; print(torch.__version__, torch.version.cuda, torch._C._cuda_getArchFlags())"
+          echo "CUDA_VER=$(/venv/bin/python -c 'import torch; print(torch.version.cuda)')" >> "$GITHUB_ENV"
+
+      - name: Install CUDA ${{ env.CUDA_VER }} toolkit and gcc 13
+        run: |
+          V="${CUDA_VER/./-}"
+          dnf install -y dnf-plugins-core
+          dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+          # Only what the kernels need: compiler, runtime headers/lib, CCCL headers.
+          # gcc 13 is supported by every nvcc from 12.4 through 13.x.
+          dnf install -y "cuda-nvcc-$V" "cuda-cudart-devel-$V" "cuda-cccl-$V" "cuda-driver-devel-$V" gcc-toolset-13-gcc-c++
+          echo "CUDA_HOME=/usr/local/cuda-$CUDA_VER" >> "$GITHUB_ENV"
+          echo "CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc" >> "$GITHUB_ENV"
+          echo "CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++" >> "$GITHUB_ENV"
+          echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/cuda-$CUDA_VER/bin" >> "$GITHUB_PATH"
+
+      - name: Build wheel
+        env:
+          TORCHLPC_FORCE_CUDA: "1"
+          MAX_JOBS: "4"
+        run: |
+          set -o pipefail
+          # On failure, surface the first errors as annotations on the run page.
+          annotate() {
+            grep -iE "error|unsupported|fatal" "$1" | grep -vE "Werror|-Wno-|errors?\.h" \
+              | head -n 15 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+          }
+          nvcc --version && g++ --version | head -1
+          /venv/bin/python -m pip wheel --no-build-isolation --no-deps -v -w dist . 2>&1 | tee build.log \
+            || { annotate build.log; exit 1; }
+          # Don't vendor torch, CUDA runtime or torch's libgomp: they come from
+          # the torch install (the pin guarantees a matching one).
+          /venv/bin/auditwheel repair dist/*.whl -w wheelhouse \
+            --exclude 'libc10.so' --exclude 'libc10_cuda.so' --exclude 'libtorch*.so' \
+            --exclude 'libcudart.so.*' --exclude 'libgomp.so.1' 2>&1 | tee repair.log \
+            || { annotate repair.log; exit 1; }
+          ls -l wheelhouse
+
+      - name: Test installed wheel
+        run: |
+          # Run from outside the source tree so the installed package is used.
+          cp -r tests /tmp/tests && cd /tmp
+          /venv/bin/pip install --no-cache-dir "$GITHUB_WORKSPACE"/wheelhouse/*.whl scipy pytest
+          /venv/bin/python - <<'EOF'
+          import torch, torchlpc
+          print("torchlpc", torchlpc.__version__, "torch", torch.__version__)
+          assert torchlpc.CUDA_EXTENSION_LOADED
+          for op in ("scan", "lpc"):
+              assert torch._C._dispatch_has_kernel_for_dispatch_key(f"torchlpc::{op}", "CUDA"), op
+          EOF
+          # No GPU on hosted runners: CUDA tests are skipped, CPU ops are exercised.
+          /venv/bin/python -m pytest -q -o addopts="" tests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-torch${{ matrix.torch }}
+          path: wheelhouse/*.whl
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-latest
+    # PyPI trusted publishing: register this repo + workflow + environment
+    # at https://pypi.org/manage/account/publishing/ (no API token needed).
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist
+      - run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
