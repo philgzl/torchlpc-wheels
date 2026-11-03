@@ -12,6 +12,7 @@
 > | `0.8.0.207` | 2.7.x | 12.6 |
 > | `0.8.0.208` – `0.8.0.210` | 2.8.x – 2.10.x | 12.8 |
 > | `0.8.0.211` – `0.8.0.214` | 2.11.x – 2.14.x | 13.0 |
+> | `0.8.0.215` | 2.15.x | 13.2 |
 >
 > CUDA is whatever the default `pip install torch` build of that version uses. Each wheel is
 > `abi3`, so it works on every Python version torch supports.
